@@ -5,5 +5,5 @@ requires = ["setuptools>=64",
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
-write_to = "spot-subaru/version.py"
+write_to = "spot_subaru/version.py"
 version_scheme = "release-branch-semver"

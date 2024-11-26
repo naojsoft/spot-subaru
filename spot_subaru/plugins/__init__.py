@@ -3,7 +3,7 @@ from ginga.misc.Bunch import Bunch
 
 
 # my plugins are available here
-p_path = os.path.split(__file__)[0]
+p_path = os.path.dirname(__file__)
 
 
 def setup_SubaruOCS():
