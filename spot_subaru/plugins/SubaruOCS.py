@@ -7,17 +7,11 @@ Requirements
 naojsoft packages
 -----------------
 - g2cam
-- ginga
 
 Usage
 =====
-Put this module in your $HOME/.spot/plugins folder.  Add the appropriate
-plugin_SubaruOCS.cfg file to $HOME/.spot
-
-Run with spot like this:
-
-spot --loglevel=20 --stderr --modules=SubaruOCS
-
+Add the appropriate plugin_SubaruOCS.cfg file to $HOME/.spot to add the
+appropriate status connection authentication.
 """
 # stdlib
 import threading
@@ -34,6 +28,18 @@ from g2cam.status.stream import StatusStream
 from spot.util import sites
 
 class SubaruOCS(GingaPlugin.GlobalPlugin):
+    """
+    +++++++++
+    SubaruOCS
+    +++++++++
+
+    SubaruOCS makes a connection to the Subaru Telescope Observation
+    Control System so that the appropriate status items can be read
+    periodically.  This enables the use of the TelescopePosition plugin.
+
+    There is no UI associated with this plugin, and it will be started
+    automatically when SPOT starts.
+    """
 
     def __init__(self, fv):
         super().__init__(fv)
@@ -107,21 +113,25 @@ class SubaruOCS(GingaPlugin.GlobalPlugin):
             except Exception as e:
                 self.logger.error(f"failed to connect to status stream: {e}",
                                   exc_info=True)
+                return
 
             # intermediary queue
             status_q = Queue.Queue()
 
-            # stream producer puts updates on the queue
+            # stream producer puts status updates on the queue
             self.fv.nongui_do(self.st_stream.subscribe_loop,
                               self.ev_quit, status_q)
 
-            # stream consumer takes them and updates the status cache
+            # stream consumer takes them and updates the local status
             self.fv.nongui_do(self.consume_stream, self.ev_quit, status_q)
 
     def stop(self):
         self.ev_quit.set()
 
     def update_status(self, status_dict):
+        """This updates our local SPOT-specific site status items with values
+        read from Subaru Telescope telemetry.
+        """
         with self.lock:
             self.status_dict.update(status_dict)
 

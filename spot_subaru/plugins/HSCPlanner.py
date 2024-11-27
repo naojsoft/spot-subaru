@@ -22,6 +22,8 @@ from ginga.util import wcs
 
 from naoj.hsc import ccd_info, sdo
 
+from spot.util.target import normalize_ra_dec_equinox
+
 
 class HSCPlanner(GingaPlugin.LocalPlugin):
     """
@@ -157,22 +159,16 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         self.tdith = 15.0
         self.rdith = 120.0
 
-        # TODO: get this from a module
-        ##self.px_scale = 0.000280178318866
-        #self.px_scale = 0.000047
-        #self.fov_deg = 2.0
-
         self.dc = fv.get_draw_classes()
         canvas = self.dc.DrawingCanvas()
-        canvas.add_callback('cursor-down', self.btn_down_cb)
-        canvas.enable_edit(True)
-        #canvas.set_drawtype(self.pickshape, color='cyan', linestyle='dash')
-        canvas.set_callback('edit-event', self.edit_cb)
-        canvas.set_draw_mode('edit')
+        canvas.set_callback('cursor-down', self.btn_down_cb)
         canvas.register_for_cursor_drawing(self.fitsimage)
-
         canvas.set_surface(self.fitsimage)
         self.canvas = canvas
+
+        self.viewer = self.fitsimage
+        self.viewer.add_callback('redraw', self.redraw_cb)
+        self.gui_up = False
 
     def build_gui(self, container):
 
@@ -186,28 +182,42 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         vbox.set_border_width(4)
         vbox.set_spacing(2)
 
-        fr = Widgets.Frame("Position")
+        fr = Widgets.Frame("Pointing")
 
         captions = (('RA:', 'label', 'RA', 'entry',
                      'DEC:', 'label', 'DEC', 'entry',),
                     ('Equinox:', 'label', 'Equinox', 'entry',
                      'Object:', 'label', 'Name', 'entry'),
-                    ('Add Target', 'button', 'Clear All', 'button'),
-                    ('Set Pointing', 'button'),
-                    ('Pointing:', 'label', 'pra', 'llabel', 'pdec', 'llabel'),
+                    ('__ph1', 'spacer', 'Set Manually', 'button',
+                     '__ph2', 'spacer', 'From a target', 'button'),
+                    ('Pointing:', 'label', 'pra', 'llabel',
+                     '__ph3', 'spacer', 'pdec', 'llabel'),
                     )
         w, b = Widgets.build_info(captions, orientation=orientation)
         self.w = b
 
+        b.pra.set_text('')
+        b.pdec.set_text('')
         b.equinox.set_text("2000")
         # Currently assume J2000 targets--this will be fixed in future
         b.equinox.set_enabled(False)
-        b.add_target.add_callback('activated', lambda w: self.add_target_cb())
-        b.clear_all.add_callback('activated', lambda w: self.clear_targets_cb())
-        #b.fov.set_text(str(self.fov_deg))
+        b.set_manually.add_callback('activated',
+                                    lambda w: self.set_pointing_manually_cb())
+        b.from_a_target.add_callback('activated',
+                                     lambda w: self.set_pointing_from_a_target_cb())
 
-        b.set_pointing.add_callback('activated',
-                                    lambda w: self.set_pointing_cb())
+        fr.set_widget(w)
+        vbox.add_widget(fr, stretch=0)
+
+        fr = Widgets.Frame("Targets")
+
+        captions = (('Add Targets', 'button', 'Clear Targets', 'button'),
+                    )
+        w, b = Widgets.build_info(captions, orientation=orientation)
+        self.w.update(b)
+
+        b.add_targets.add_callback('activated', lambda w: self.add_targets_cb())
+        b.clear_targets.add_callback('activated', lambda w: self.clear_targets_cb())
 
         fr.set_widget(w)
         vbox.add_widget(fr, stretch=0)
@@ -249,15 +259,16 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         b.stop.set_value(1)
 
         vbox2.add_widget(w)
+        self.set_dither_type_cb()
 
         captions = (('_x3', 'spacer', '_x4', 'spacer',
                      '_x5', 'spacer'),
-                    ('Update Image', 'button', 'Clear Overlays', 'button'),
+                    ('Update View', 'button', 'Clear Overlays', 'button'),
                     )
         w, b = Widgets.build_info(captions, orientation=orientation)
         self.w.update(b)
 
-        b.update_image.add_callback('activated',
+        b.update_view.add_callback('activated',
                                     lambda w: self.update_info_cb())
         b.clear_overlays.add_callback('activated',
                                       lambda w: self.clear_overlays())
@@ -277,8 +288,8 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
 
         vbox.add_widget(w, stretch=0)
 
-        spacer = Widgets.Label('')
-        vbox.add_widget(spacer, stretch=1)
+        # spacer = Widgets.Label('')
+        # vbox.add_widget(spacer, stretch=1)
 
         top.add_widget(sw, stretch=1)
 
@@ -295,6 +306,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         top.add_widget(btns, stretch=0)
 
         container.add_widget(top, stretch=1)
+        self.gui_up = True
 
     def set_dither_type_cb(self):
         index = self.w.dither_type.get_index()
@@ -504,7 +516,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         except KeyError:
             # Add our layer
             p_canvas.add(self.canvas, tag=self.layertag)
-        self.canvas.ui_set_active(False)
+        self.canvas.ui_set_active(True)
 
     def stop(self):
         # remove the canvas from the image
@@ -513,18 +525,27 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
             p_canvas.delete_object_by_tag(self.layertag)
         except Exception:
             pass
+        self.canvas.ui_set_active(False)
+        self.gui_up = False
         self.fv.show_status("")
 
     def redo(self):
-        image = self.fitsimage.get_image()
-        wd, ht = image.get_size()
-        ra_deg, dec_deg = image.pixtoradec(wd / 2.0, ht / 2.0)
-        ra, dec = self._set_radec(ra_deg, dec_deg)
-
+        # check pan location
+        pos = self.viewer.get_pan(coord='data')[:2]
+        data_x, data_y = pos[:2]
+        image = self.viewer.get_image()
+        if image is None:
+            return
         # set pointing
+        ra_deg, dec_deg = image.pixtoradec(data_x, data_y)
         self.ctr_ra_deg, self.ctr_dec_deg = ra_deg, dec_deg
-        self.w.pra.set_text(ra)
-        self.w.pdec.set_text(dec)
+
+        if self.gui_up:
+            ra, dec = self._set_radec(ra_deg, dec_deg)
+            self.w.pra.set_text(ra)
+            self.w.pdec.set_text(dec)
+            header = image.get_header()
+            self.w.equinox.set_text(str(header.get('EQUINOX', '')))
 
     def _ccd_in_dither(self, dither, polygon):
         x_arr, y_arr = dither.T[0], dither.T[1]
@@ -627,6 +648,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         for ra_deg, dec_deg in posns:
             x, y = image.radectopix(ra_deg, dec_deg)
             l.append(Text(x, y, text="%d" % i, color='yellow',
+                          fontscale=True, fontsize_min=10, fontsize_max=18,
                           coord='data'))
             l.append(Point(x, y, self.target_radius, color='yellow',
                            style='plus', coord='data'))
@@ -646,10 +668,11 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         for i, obj in enumerate(self.targets):
             self.canvas.add(obj, tag='target%d' % (i))
 
-    def make_target(self, ra_deg, dec_deg, equinox):
+    def make_target(self, name, ra_deg, dec_deg, equinox):
 
         Point = self.canvas.get_draw_class('point')
         Circle = self.canvas.get_draw_class('circle')
+        Text = self.canvas.get_draw_class('text')
         CompoundObject = self.canvas.get_draw_class('compoundobject')
 
         image = self.fitsimage.get_image()
@@ -657,11 +680,14 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         x, y = image.radectopix(ra_deg, dec_deg)
         obj = CompoundObject(
             Point(x, y, self.target_radius,
-                  linewidth=1, color='skyblue', coord='data'),
+                  linewidth=1, color='seagreen2', coord='data'),
             Circle(x, y, self.target_radius,
-                   linewidth=4, color='skyblue', coord='data'))
+                   linewidth=4, color='seagreen2', coord='data'),
+            Text(x, y, text=name, color='seagreen2', coord='data',
+                 fontscale=True, fontsize_min=10, fontsize_max=18))
         obj.objects[0].editable = False
         obj.objects[1].editable = False
+        obj.objects[2].editable = False
         obj.opaque = True
         obj.editable = True
         self.targets.append(obj)
@@ -680,40 +706,60 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         self.w.dec.set_text(dec_txt)
         return ra_txt, dec_txt
 
-    def set_pointing_cb(self):
+    def set_pointing_manually_cb(self):
         try:
             ra = self.w.ra.get_text()
             dec = self.w.dec.get_text()
 
-            tgt_ra_deg = wcs.hmsStrToDeg(ra)
-            tgt_dec_deg = wcs.dmsStrToDeg(dec)
-            self.ctr_ra_deg, self.ctr_dec_deg = tgt_ra_deg, tgt_dec_deg
+            ra_deg, dec_deg, eq = normalize_ra_dec_equinox(ra, dec, 2000.0)
+            self.ctr_ra_deg, self.ctr_dec_deg = ra_deg, dec_deg
 
             self.w.pra.set_text(ra)
             self.w.pdec.set_text(dec)
         except Exception as e:
             self.fv.show_error(str(e))
 
-    def add_target_cb(self):
-        ra = self.w.ra.get_text()
-        dec = self.w.dec.get_text()
-        eq = self.w.equinox.get_text()
-        name = self.w.name.get_text()
+    def set_pointing_from_a_target_cb(self):
+        wsname, _ = self.channel.name.split('_')
+        channel = self.fv.get_channel(wsname + '_TGTS')
+        obj = channel.opmon.get_plugin('Targets')
+        selected = list(obj.get_selected_targets())
+        if len(selected) != 1:
+            self.fv.show_error("Please select exactly one target in the Targets table!")
+            return
 
+        tgt = selected[0]
         try:
-            tgt_ra_deg = wcs.hmsStrToDeg(ra)
-            tgt_dec_deg = wcs.dmsStrToDeg(dec)
-            tgt_equinox = float(eq)
+            ra_deg, dec_deg, eq = normalize_ra_dec_equinox(tgt.ra, tgt.dec, tgt.equinox)
+            self.ctr_ra_deg, self.ctr_dec_deg = ra_deg, dec_deg
 
-            self.make_target(tgt_ra_deg, tgt_dec_deg, tgt_equinox)
+            self.w.name.set_text(tgt.name)
+            ra_str = wcs.ra_deg_to_str(ra_deg)
+            dec_str = wcs.dec_deg_to_str(dec_deg)
+            self.w.ra.set_text(ra_str)
+            self.w.dec.set_text(dec_str)
+            self.w.equinox.set_text(str(eq))
 
-            #self.draw_targets()
-
+            self.w.pra.set_text(ra_str)
+            self.w.pdec.set_text(dec_str)
         except Exception as e:
-            errmsg = "Failed to process target: %s" % (str(e))
+            errmsg = f"Failed to process target: {e}"
             self.fv.show_error(errmsg)
             self.logger.error(errmsg, exc_info=True)
-        return True
+
+    def add_targets_cb(self):
+        wsname, _ = self.channel.name.split('_')
+        channel = self.fv.get_channel(wsname + '_TGTS')
+        obj = channel.opmon.get_plugin('Targets')
+        selected = list(obj.get_selected_targets())
+        for tgt in selected:
+            try:
+                self.make_target(tgt.name, tgt.ra, tgt.dec, tgt.equinox)
+
+            except Exception as e:
+                errmsg = "Failed to process target: %s" % (str(e))
+                self.fv.show_error(errmsg)
+                self.logger.error(errmsg, exc_info=True)
 
     def clear_targets_cb(self):
         self.targets = []
@@ -729,12 +775,11 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         self.logger.info("cursor callback done")
         return True
 
-    def edit_cb(self, canvas, obj):
-        image = self.fitsimage.get_image()
-        pt = obj.objects[0]
-        ra_deg, dec_deg = image.pixtoradec(pt.x, pt.y)
-        self.logger.info("edit callback done")
-        return True
+    def redraw_cb(self, viewer, whence):
+        if not self.gui_up or whence >= 3:
+            return
+        # user may have changed pan position--pick up new pointing
+        self.redo()
 
     def __str__(self):
         return 'hscplanner'
