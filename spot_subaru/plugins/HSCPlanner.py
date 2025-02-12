@@ -30,7 +30,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
     HSCPlanner works according to the following steps:
 
     A) establish the pointing of the telescope
-    B) create a blank field or DSS field from the established pointing
+    B) create a blank field or survey image field from the established pointing
     C) place one or more targets within the field
     D) set the acquisition parameters and visualize
     E) repeat D) or from earlier steps as needed or desired
@@ -39,46 +39,37 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
 
     A) Establishing Pointing
 
-    To establish pointing, you can type RA and DEC coordinates (sexigesimal)
-    into the corresponding boxes under the "Position" section of the GUI and
-    click "Set Pointing".
+    The easiest way to establish pointing is to load the Targets plugin
+    with your targets from an OPE or CSV file.  Then, select exactly one
+    of the targets and then click the "From a target" button.  The RA,
+    DEC, Equinox and Object fields should be filled out.
 
-    Another way that is fairly easy is to drag a FITS image that has a
-    reasonably accurate WCS with pointing for the desired field into the
-    main window. Click anywhere on the image to set the RA and DEC boxes,
-    and you can then click "Set Pointing".
-
-    You can use this image as the background image (and skip Step B) if
-    the FOV is wide enough to show your target of interest (HSC FOV is
-    approx 1.5 deg).
-
+    If you prefer to set it manually, you can type RA and DEC coordinates
+    into the corresponding boxes under the "Pointing" section of the GUI
+    and click "Set manually". You can use sexigesimal format, with RA in
+    H:M:S and DEC in D:M:S or decimal numbers interpreted as degrees.
 
     B) Create Field from Pointing
 
     Once pointing is established, we need to create a background field with
     correct WCS to do the correct overplotting to visualize the acquisition.
-    You can either load your own background image (already discussed),
-    create a blank field, or download a DSS image of the field (if available).
+    We will generally do this with the FindImage (Finding Chart) plugin.
+    Make sure that plugin is started, and then click the button
+    "Send pointing to FindImage" to set the defined pointingin that plugin.
 
-    To create a blank image click "Create Blank". To download a DSS field
-    click "Get DSS". To use the DSS function you will need a functioning
-    internet connection.
+    In FindImage, create a blank field (by clicking "Create Blank"), or
+    download a survey image of the field (select a survey and click
+    "Find image"). If you'd prefer to use your own locally stored FITS
+    image, you can load it using the "Load FITS" button.
 
-    ----------------------------------------------
-    NOTE: the default location for DSS download is from ESO's web site and
-    it may take up to a minute to download and update the background image.
-    If you experience trouble acquiring a DSS image it is recommended that
-    you download your own background FITS image and load it in step A.
-    ----------------------------------------------
+    Note that a blank field is perfectly fine for visualizing where your
+    targets will land on the detectors.
 
     C) Placing Targets within the Field
 
-    To place targets within the field, you can type RA and DEC coordinates
-    as in step A above or simply click in the field where you want a target
-    (as in step A the RA and DEC boxes will be filled when you click).
-    Press "Add Target" to add the current RA/DEC as a target. You can fine
-    tune the target position by simply moving it using the cursor.
-    To completely clear the target list, press "Clear All".
+    To place targets within the field, select the desired targets in the
+    Targets table and click "Add Targets".  To clear any existing targets
+    click "Clear Targets".
 
     D) Set the Acquisition Parameters and Visualize
 
@@ -94,9 +85,9 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
     - Dither steps: only settable for N-type dither, set it to the number
     of dither positions
 
-    - INSROT_PA: this parameter will set up the instrument rotator to set
-    the rotation of the field on the CCD plane--see the instrument
-    documentation for details
+    - Pos Angle: this parameter will set up the instrument rotator to set
+    the rotation of the field on the CCD plane so that the desired position
+    angle is achieved--see the instrument documentation for details.
 
     - RA Offset, DEC Offset: offsets in arc seconds from the pointing
     position in the center of the field
@@ -116,9 +107,10 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
     - Stop: used to terminate a dither early after a certain number of shots.
     Leave at the default for the full dither.
 
-    Once you have set the parameters as desired, press the "Update Image"
-    button to update the overlays. You can then use the "Show Step" control
-    to step through your dither.
+    Once you have set the parameters as desired, click the "Update View"
+    button to update the overlays. You can then use the "Dither Pos" control
+    to step through your dither.  The mouse wheel can be used effectively
+    with this control.
 
     HINTS
 
@@ -148,6 +140,8 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
 
         self.ctr_ra_deg = 0.0
         self.ctr_deg_deg = 0.0
+        # TODO
+        self.ctr_equinox = 2000.0
         self.targets = []
         #self.target_radius = 0.01
         self.target_radius = 20
@@ -182,7 +176,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         vbox.set_border_width(4)
         vbox.set_spacing(2)
 
-        fr = Widgets.Frame("Pointing")
+        fr = Widgets.Frame("Step A: Pointing")
 
         captions = (('RA:', 'label', 'RA', 'entry',
                      'DEC:', 'label', 'DEC', 'entry',),
@@ -203,13 +197,41 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         b.equinox.set_enabled(False)
         b.set_manually.add_callback('activated',
                                     lambda w: self.set_pointing_manually_cb())
+        b.set_manually.set_tooltip("Set pointing from manually entered coordinates above")
         b.from_a_target.add_callback('activated',
                                      lambda w: self.set_pointing_from_a_target_cb())
+        b.from_a_target.set_tooltip("Set pointing by a single selected target from the Targets table")
 
         fr.set_widget(w)
         vbox.add_widget(fr, stretch=0)
 
-        fr = Widgets.Frame("Targets")
+        fr = Widgets.Frame("Step B: Set Field")
+        vb2 = Widgets.VBox()
+        vb2.set_border_width(0)
+        vb2.set_spacing(2)
+        lbl = Widgets.TextArea(wrap=True, editable=False)
+        lbl.set_text("Set an image with WCS for this pointing. Open the FindImage "
+                     "(Finding Chart) plugin if it is not already open.  Click the "
+                     "'Send Pointing to FindImage' button below to establish pointing there. "
+                     "Then create a blank image, download a survey image or load your "
+                     "own FITS image using the buttons there. Note that a blank image "
+                     "is sufficient to see where the targets will land on the detectors "
+                     "at each step.")
+        vb2.add_widget(lbl, stretch=1)
+        hb2 = Widgets.HBox()
+        hb2.set_border_width(2)
+        hb2.set_spacing(2)
+        btn = Widgets.Button("Send Pointing to FindImage")
+        btn.set_tooltip("Set the pointing in FindImage from this Step A pointing")
+        btn.add_callback('activated', lambda w: self.send_pointing_cb())
+        hb2.add_widget(btn, stretch=0)
+        hb2.add_widget(Widgets.Label(''), stretch=1)
+        vb2.add_widget(hb2, stretch=0)
+
+        fr.set_widget(vb2)
+        vbox.add_widget(fr, stretch=0)
+
+        fr = Widgets.Frame("Step C: Targets")
 
         captions = (('Add Targets', 'button', 'Clear Targets', 'button'),
                     )
@@ -217,12 +239,14 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         self.w.update(b)
 
         b.add_targets.add_callback('activated', lambda w: self.add_targets_cb())
+        b.add_targets.set_tooltip("Add selected targets in the Targets table")
         b.clear_targets.add_callback('activated', lambda w: self.clear_targets_cb())
+        b.clear_targets.set_tooltip("Clear all currently added targets")
 
         fr.set_widget(w)
         vbox.add_widget(fr, stretch=0)
 
-        fr = Widgets.Frame("Acquisition")
+        fr = Widgets.Frame("Step D: Acquisition")
 
         vbox2 = Widgets.VBox()
         captions = (('Dither Type:', 'label', 'Dither Type', 'combobox',
@@ -243,20 +267,23 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
             combobox.append_text(name)
         index = self.dither_types.index(self.dither_type)
         combobox.set_index(index)
-        combobox.add_callback('activated',
-                              lambda w, idx: self.set_dither_type_cb())
+        combobox.add_callback('activated', lambda w, idx: self.set_dither_type_cb())
+        combobox.set_tooltip("Set dither type")
         b.pa.set_text(str(self.pa_deg))
         b.dither_steps.set_limits(1, 20)
         b.dither_steps.add_callback('value-changed',
                                     lambda w, idx: self.set_dither_steps_cb(idx))
-        b.pa.set_tooltip("Angle of instrument rotator in deg")
+        b.dither_steps.set_tooltip("Number of dither steps")
+        b.pa.set_tooltip("Position angle for exposures in deg")
 
         b.ra_offset.set_text(str(0.0))
         b.dec_offset.set_text(str(0.0))
         b.ra_offset.set_tooltip("RA offset from center of field in arcsec")
         b.dec_offset.set_tooltip("DEC offset from center of field in arcsec")
         b.skip.set_value(0)
+        b.skip.set_tooltip("Skip over some dither steps")
         b.stop.set_value(1)
+        b.stop.set_tooltip("Stop at a particular dither step")
 
         vbox2.add_widget(w)
         self.set_dither_type_cb()
@@ -268,23 +295,24 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         w, b = Widgets.build_info(captions, orientation=orientation)
         self.w.update(b)
 
-        b.update_view.add_callback('activated',
-                                    lambda w: self.update_info_cb())
-        b.clear_overlays.add_callback('activated',
-                                      lambda w: self.clear_overlays())
+        b.update_view.add_callback('activated', lambda w: self.update_info_cb())
+        b.update_view.set_tooltip("Update the overlays after changing acquisition parameters")
+        b.clear_overlays.add_callback('activated', lambda w: self.clear_overlays())
+        b.clear_overlays.set_tooltip("Clear some of the overlays")
 
         vbox2.add_widget(w)
 
         fr.set_widget(vbox2)
         vbox.add_widget(fr, stretch=0)
 
-        captions = (("Show Step:", 'label', 'Show Step', 'spinbutton'),
+        captions = (("Dither Pos:", 'label', 'Show Step', 'spinbutton'),
                     )
         w, b = Widgets.build_info(captions, orientation=orientation)
         self.w.update(b)
 
         b.show_step.add_callback('value-changed',
                                  lambda w, idx: self.show_step_cb(idx))
+        b.show_step.set_tooltip("Show position of detectors at dither step")
 
         vbox.add_widget(w, stretch=0)
 
@@ -648,10 +676,10 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         for ra_deg, dec_deg in posns:
             x, y = image.radectopix(ra_deg, dec_deg)
             l.append(Text(x, y, text="%d" % i, color='yellow',
-                          fontscale=True, fontsize_min=10, fontsize_max=18,
+                          fontscale=True, fontsize_min=14, fontsize_max=18,
                           coord='data'))
             l.append(Point(x, y, self.target_radius, color='yellow',
-                           style='plus', coord='data'))
+                           linewidth=2, style='plus', coord='data'))
             i += 1
         obj = CompoundObject(*l)
         obj.opaque = True
@@ -768,11 +796,11 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         return True
 
     def btn_down_cb(self, canvas, event, data_x, data_y):
-        self.logger.info("cursor at %f,%f" % (data_x, data_y))
+        self.logger.debug("cursor at %f,%f" % (data_x, data_y))
         image = self.fitsimage.get_image()
         ra_deg, dec_deg = image.pixtoradec(data_x, data_y)
         self._set_radec(ra_deg, dec_deg)
-        self.logger.info("cursor callback done")
+        self.logger.debug("cursor callback done")
         return True
 
     def redraw_cb(self, viewer, whence):
@@ -780,6 +808,11 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
             return
         # user may have changed pan position--pick up new pointing
         self.redo()
+
+    def send_pointing_cb(self):
+        obj = self.channel.opmon.get_plugin('FindImage')
+        obj.set_pointing(self.ctr_ra_deg, self.ctr_dec_deg,
+                         self.ctr_equinox, 'none')
 
     def __str__(self):
         return 'hscplanner'

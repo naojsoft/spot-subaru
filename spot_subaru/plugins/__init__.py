@@ -19,14 +19,14 @@ def setup_HSCPlanner():
                  module='HSCPlanner', klass='HSCPlanner',
                  ptype='local', category="Planning", menu="HSC Planner",
                  tab='HSC Planner', ch_sfx='_FIND',
-                 enabled=True, exclusive=False,)
+                 enabled=True, exclusive=False)
     return spec
 
 
 def setup_RotCalc():
     spec = Bunch(path=os.path.join(p_path, 'RotCalc.py'),
                  module='RotCalc', klass='RotCalc',
-                 ptype='local', category="Planning",
+                 ptype='local', category="Experimental",
                  menu="RotCalc", tab='RotCalc',
                  ch_sfx='_TGTS', enabled=False, exclusive=False)
     return spec
