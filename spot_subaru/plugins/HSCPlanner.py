@@ -172,7 +172,10 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         top = Widgets.VBox()
         top.set_border_width(4)
 
-        vbox, sw, orientation = Widgets.get_oriented_box(container)
+        #vbox, sw, orientation = Widgets.get_oriented_box(container)
+        orientation = 'vertical'
+        sw = Widgets.ScrollArea()
+        vbox = Widgets.VBox()
         vbox.set_border_width(4)
         vbox.set_spacing(2)
 
@@ -315,9 +318,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         b.show_step.set_tooltip("Show position of detectors at dither step")
 
         vbox.add_widget(w, stretch=0)
-
-        # spacer = Widgets.Label('')
-        # vbox.add_widget(spacer, stretch=1)
+        sw.set_widget(vbox)
 
         top.add_widget(sw, stretch=1)
 
@@ -505,7 +506,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
         return True
 
     def _show_step(self, n):
-        self.logger.info("moving to step %d" % (n))
+        self.logger.debug("moving to step %d" % (n))
         ra, dec = self.calc_dither(n)
         image = self.fitsimage.get_image()
         data_x, data_y = image.radectopix(ra, dec)
@@ -522,7 +523,7 @@ class HSCPlanner(GingaPlugin.LocalPlugin):
 
     def show_step_cb(self, n):
         #n = int(strip(self.w.show_step.get_text()))
-        self.logger.info("step %d!" % (n))
+        self.logger.debug("step %d!" % (n))
         self.fv.error_wrap(self._show_step, n)
         return True
 
