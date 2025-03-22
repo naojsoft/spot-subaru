@@ -14,6 +14,8 @@ import os
 
 import numpy as np
 
+from naoj.util import rot as naoj_rot
+
 # ginga
 from ginga.gw import Widgets, GwHelp
 from ginga.misc import Bunch
@@ -22,10 +24,7 @@ from ginga.util import wcs
 
 # local
 from spot.util import calcpos
-from spot.util.rot import calc_rotation_choices
 
-# spot
-#from spot.util.polar import subaru_normalize_az
 
 default_report = os.path.join(os.path.expanduser('~'), "rot_report.csv")
 
@@ -40,54 +39,56 @@ class RotCalc(GingaPlugin.LocalPlugin):
         prefs = self.fv.get_preferences()
         self.settings = prefs.create_category('plugin_RotCalc')
         self.settings.add_defaults(telescope_update_interval=3.0,
-                                   default_report=default_report)
+                                   default_report=default_report,
+                                   follow_telescope=False)
         self.settings.load(onError='silent')
 
         self.viewer = self.fitsimage
 
         self.columns = [('Time', 'time'),
                         ('Name', 'name'),
+                        ('RA', 'ra_str'),
+                        ('DEC', 'dec_str'),
                         ('PA', 'pa_deg'),
-                        ('Rot cur', 'rot_cur_deg'),
+                        # ('Rot cur', 'rot_cur_deg'),
                         ('Rot1 start', 'rot1_start_deg'),
                         ('Rot1 stop', 'rot1_stop_deg'),
                         ('Rot2 start', 'rot2_start_deg'),
                         ('Rot2 stop', 'rot2_stop_deg'),
-                        ('Min Rot Move', 'min_rot_move'),
-                        ('Max Rot Time', 'max_rot_time'),
-                        ('Rot Chosen', 'rot_chosen'),
-                        ('RA', 'ra_str'),
-                        ('DEC', 'dec_str'),
-                        ('Cur Az', 'az_cur_deg'),
+                        # ('Min Rot Move', 'min_rot_move'),
+                        # ('Max Rot Time', 'max_rot_time'),
+                        ('Sugg Rot', 'rot_chosen'),
+                        # ('Cur Az', 'az_cur_deg'),
                         ('Az1 start', 'az1_start_deg'),
                         ('Az1 stop', 'az1_stop_deg'),
                         ('Az2 start', 'az2_start_deg'),
                         ('Az2 stop', 'az2_stop_deg'),
-                        ('Alt', 'alt_deg'),
-                        ('Min Az Move', 'min_az_move'),
-                        ('Max Az Time', 'max_az_time'),
-                        ('Chosen Az', 'az_chosen'),
+                        # ('Alt', 'alt_deg'),
+                        # ('Min Az Move', 'min_az_move'),
+                        # ('Max Az Time', 'max_az_time'),
+                        ('Sugg Az', 'az_chosen'),
                         ]
         self.rot_deg = 0.0
         self.rot_cmd_deg = 0.0
         self.az_deg = 0.0
         self.az_cmd_deg = 0.0
-        self.rot_limits = (-174, 174)
-        self.az_limits = (-270, 270)
         self.pa_deg = 0.0
         self.time_sec = 15 * 60
+        self.insname = 'PFS'
+        self.rot_min_deg = -174.0
+        self.rot_max_deg = +174.0
+        self.az_min_deg = -270.0
+        self.az_max_deg = +270.0
         self.tbl_dct = dict()
         self.time_str = None
-        self.tgt_locked = False
+        self.targets = None
+        self._cur_target = None
         self._autosave = False
         # these are set via callbacks from the SiteSelector plugin
         self.site = None
         self.dt_utc = None
         self.cur_tz = None
         self.gui_up = False
-
-        self.tmr = GwHelp.Timer(duration=self.settings['telescope_update_interval'])
-        self.tmr.add_callback('expired', self.update_tel_timer_cb)
 
     def build_gui(self, container):
 
@@ -97,29 +98,43 @@ class RotCalc(GingaPlugin.LocalPlugin):
         obj.cb.add_callback('site-changed', self.site_changed_cb)
         self.dt_utc, self.cur_tz = obj.get_datetime()
         obj.cb.add_callback('time-changed', self.time_changed_cb)
-
-        targets = self.channel.opmon.get_plugin('Targets')
-        targets.cb.add_callback('tagged-changed', self.target_selection_cb)
+        self.targets = self.channel.opmon.get_plugin('Targets')
+        self.telpos = self.channel.opmon.get_plugin('TelescopePosition')
+        self.telpos.cb.add_callback('telescope-status-changed',
+                                    self.telpos_changed_cb)
 
         top = Widgets.VBox()
         top.set_border_width(4)
 
-        fr = Widgets.Frame("Current Rot / Az")
-        captions = (('Cur Rot:', 'label', 'cur_rot', 'llabel',
-                     'Cmd Rot:', 'label', 'cmd_rot', 'llabel',
-                     'Cur Az:', 'label', 'cur_az', 'llabel',
-                     'Cmd Az:', 'label', 'cmd_az', 'llabel'),
+        fr = Widgets.Frame("Pointing")
+
+        captions = (('RA:', 'label', 'ra', 'llabel', 'DEC:', 'label',
+                     'dec', 'llabel'),
+                    ('Equinox:', 'label', 'equinox', 'llabel',
+                     'Name:', 'label', 'tgt_name', 'llabel'),
+                    ('Get Selected', 'button', '_sp1', 'spacer',
+                     "Follow telescope", 'checkbox')
                     )
 
         w, b = Widgets.build_info(captions)
         self.w = b
+        b.ra.set_text('')
+        b.dec.set_text('')
+        b.equinox.set_text('')
+        b.tgt_name.set_text('')
+        b.get_selected.set_tooltip("Get the coordinates from the selected target in Targets table")
+        b.get_selected.add_callback('activated', self.get_selected_target_cb)
+        b.follow_telescope.set_tooltip("Set pointing to telescope position")
+        b.follow_telescope.set_state(self.settings['follow_telescope'])
+        self.w.update(b)
         fr.set_widget(w)
         top.add_widget(fr, stretch=0)
 
-        fr = Widgets.Frame("PA / Time /Az El")
+        fr = Widgets.Frame("PA / Exp Time")
 
-        captions = (('PA (deg):', 'label', 'pa', 'entryset',
-                     'Time (sec):', 'label', 'secs', 'entryset'),
+        captions = (("Calculate", 'button',
+                     'PA (deg):', 'label', 'pa', 'entry',
+                     'Exp time (sec):', 'label', 'secs', 'entry'),
                     )
 
         w, b = Widgets.build_info(captions)
@@ -129,33 +144,20 @@ class RotCalc(GingaPlugin.LocalPlugin):
         top.add_widget(fr, stretch=0)
 
         b.pa.set_text("0.00")
-        b.pa.add_callback('activated', self.set_pa_cb)
         b.pa.set_tooltip("Set desired position angle")
         b.secs.set_text("{}".format(15 * 60.0))
-        b.secs.add_callback('activated', self.set_time_cb)
         b.secs.set_tooltip("Number of seconds on target")
+        b.calculate.set_tooltip("Calculate rotator and azimuth choices")
+        b.calculate.add_callback('activated', self.calc_rotations_cb)
 
-        fr = Widgets.Frame("Pointing")
-
-        captions = (('RA:', 'label', 'ra', 'entry', 'DEC:', 'label',
-                     'dec', 'entry',  # ),
-                     #('Equinox:', 'label', 'equinox', 'entry',
-                     'Name:', 'label', 'tgt_name', 'entry'),
-                    ('__ph1', 'spacer', 'Setup', 'button',
-                     '__ph2', 'spacer', 'Record', 'button',
-                     '__ph3', 'spacer', 'Lock Target', 'checkbox',
-                     "Send Target", 'button')
+        fr = Widgets.Frame("Current Rot / Az")
+        captions = (('Cur Rot:', 'label', 'cur_rot', 'llabel',
+                     'Cmd Rot:', 'label', 'cmd_rot', 'llabel',
+                     'Cur Az:', 'label', 'cur_az', 'llabel',
+                     'Cmd Az:', 'label', 'cmd_az', 'llabel'),
                     )
 
         w, b = Widgets.build_info(captions)
-        b.lock_target.set_tooltip("Lock target from changing by selections in 'Targets'")
-        b.lock_target.set_state(self.tgt_locked)
-        b.lock_target.add_callback('activated', self._lock_target_cb)
-        b.setup.add_callback('activated', lambda w: self.setup())
-        b.record.add_callback('activated', lambda w: self.record())
-        b.record.set_enabled(False)
-        b.send_target.add_callback('activated', self.send_target_cb)
-        b.send_target.set_tooltip("Send the target coordinates to Gen2")
         self.w.update(b)
         fr.set_widget(w)
         top.add_widget(fr, stretch=0)
@@ -171,19 +173,19 @@ class RotCalc(GingaPlugin.LocalPlugin):
 
         #top.add_widget(Widgets.Label(''), stretch=1)
 
-        fr = Widgets.Frame("Report")
+        # fr = Widgets.Frame("Report")
 
-        captions = (('File:', 'label', 'filename', 'entry',
-                     'Save', 'button', 'Auto Save', 'checkbox'),
-                    )
+        # captions = (('File:', 'label', 'filename', 'entry',
+        #              'Save', 'button', 'Auto Save', 'checkbox'),
+        #             )
 
-        w, b = Widgets.build_info(captions)
-        self.w.update(b)
-        b.save.add_callback('activated', self.save_report_cb)
-        b.auto_save.set_state(self._autosave)
-        b.auto_save.add_callback('activated', self.autosave_cb)
-        fr.set_widget(w)
-        top.add_widget(fr, stretch=0)
+        # w, b = Widgets.build_info(captions)
+        # self.w.update(b)
+        # b.save.add_callback('activated', self.save_report_cb)
+        # b.auto_save.set_state(self._autosave)
+        # b.auto_save.add_callback('activated', self.autosave_cb)
+        # fr.set_widget(w)
+        # top.add_widget(fr, stretch=0)
 
         btns = Widgets.HBox()
         btns.set_border_width(4)
@@ -207,16 +209,17 @@ class RotCalc(GingaPlugin.LocalPlugin):
         return True
 
     def start(self):
-        self.update_tel_timer_cb(self.tmr)
+        pass
 
     def stop(self):
-        self.tmr.cancel()
         self.gui_up = False
 
-    def setup(self):
-        if self.time_str is not None:
-            self.cancel()
-            return
+    def calc_rotations_cb(self, w):
+        self.w.rot_tbl.clear()
+        self.tbl_dct = dict()
+
+        self.pa_deg = float(self.w.pa.get_text().strip())
+        self.time_sec = float(self.w.secs.get_text().strip())
         self.time_str = self.dt_utc.astimezone(self.cur_tz).strftime("%H:%M:%S")
         name = self.w.tgt_name.get_text().strip()
         ra_str = self.w.ra.get_text().strip()
@@ -230,133 +233,68 @@ class RotCalc(GingaPlugin.LocalPlugin):
         cres_start = body.calc(self.site.observer, self.dt_utc)
         cres_stop = body.calc(self.site.observer,
                               self.dt_utc + timedelta(seconds=self.time_sec))
-        res = calc_rotation_choices(cres_start, cres_stop, self.pa_deg)
 
-        # calculate which rotator position requires less time to achieve
-        rot_mov1 = self.rot_deg - res.rot1_start_deg
-        rot_mov2 = self.rot_deg - res.rot2_start_deg
-        min_rot_move = res.rot1_start_deg if abs(rot_mov1) < abs(rot_mov2) \
-            else res.rot2_start_deg
+        # CHECK POSSIBLE ROTATIONS
+        res = naoj_rot.calc_possible_rotations(cres_start.pang_deg,
+                                               cres_stop.pang_deg, self.pa_deg,
+                                               self.insname)
+        rot1_start_deg, rot1_stop_deg = res[0]
+        rot2_start_deg, rot2_stop_deg = res[1]
 
-        # calculate which rotator position gives the most time
-        if not (self.rot_limits[0] <= res.rot1_start_deg <= self.rot_limits[1]):
-            tot1_deg = -1
-        else:
-            if res.rot1_start_deg < res.rot1_stop_deg:
-                tot1_deg = abs(self.rot_limits[1] - res.rot1_start_deg)
-            else:
-                tot1_deg = abs(self.rot_limits[0] - res.rot1_start_deg)
+        rot_start, rot_stop = naoj_rot.calc_optimal_rotation(rot1_start_deg,
+                                                             rot1_stop_deg,
+                                                             rot2_start_deg,
+                                                             rot2_stop_deg,
+                                                             self.rot_deg,
+                                                             self.rot_min_deg,
+                                                             self.rot_max_deg)
 
-        if not (self.rot_limits[0] <= res.rot2_start_deg <= self.rot_limits[1]):
-            tot2_deg = -1
-        else:
-            if res.rot2_start_deg < res.rot2_stop_deg:
-                tot2_deg = abs(self.rot_limits[1] - res.rot2_start_deg)
-            else:
-                tot2_deg = abs(self.rot_limits[0] - res.rot2_start_deg)
+        # CHECK POSSIBLE AZIMUTHS
+        status = self.site.get_status()
+        lat_deg = status['latitude_deg']
+        az_choices = naoj_rot.calc_possible_azimuths(cres_start, cres_stop,
+                                                     lat_deg)
+        az1_start_deg = np.nan
+        az1_stop_deg = np.nan
+        az2_start_deg = np.nan
+        az2_stop_deg = np.nan
+        if len(az_choices) > 0:
+            az1_start_deg, az1_stop_deg = az_choices[0]
+        if len(az_choices) > 1:
+            az2_start_deg, az2_stop_deg = az_choices[1]
 
-        if tot1_deg < 0:
-            if tot2_deg < 0:
-                max_rot_time = -9999
-            else:
-                max_rot_time = res.rot2_start_deg
-        else:
-            if tot2_deg < 0:
-                max_rot_time = res.rot1_start_deg
-            else:
-                max_rot_time = res.rot1_start_deg \
-                    if tot1_deg < tot2_deg else res.rot2_start_deg
-
-        res2 = self.normalize_az(res)
-
-        # calculate which azimuth position requires less time to achieve
-        az_mov1 = self.az_deg - res2.az1_start_deg
-        az_mov2 = self.az_deg - res2.az2_start_deg
-        min_az_move = res2.az1_start_deg if abs(az_mov1) < abs(az_mov2) \
-            else res2.az2_start_deg
-
-        # calculate which rotator position gives the most time
-        if not (self.az_limits[0] <= res2.az1_start_deg <= self.az_limits[1]):
-            tot1_deg = -1
-        else:
-            if res2.az1_start_deg < res2.az1_stop_deg:
-                tot1_deg = abs(self.az_limits[1] - res2.az1_start_deg)
-            else:
-                tot1_deg = abs(self.az_limits[0] - res2.az1_start_deg)
-
-        if not (self.az_limits[0] <= res2.az2_start_deg <= self.az_limits[1]):
-            tot2_deg = -1
-        else:
-            if res2.az2_start_deg < res2.az2_stop_deg:
-                tot2_deg = abs(self.az_limits[1] - res2.az2_start_deg)
-            else:
-                tot2_deg = abs(self.az_limits[0] - res2.az2_start_deg)
-
-        if tot1_deg < 0:
-            if tot2_deg < 0:
-                max_az_time = -9999
-            else:
-                max_az_time = res2.az2_start_deg
-        else:
-            if tot2_deg < 0:
-                max_az_time = res2.az1_start_deg
-            else:
-                max_az_time = res2.az1_start_deg \
-                    if tot1_deg < tot2_deg else res2.az2_start_deg
+        az_start, az_stop = naoj_rot.calc_optimal_rotation(az1_start_deg,
+                                                           az1_stop_deg,
+                                                           az2_start_deg,
+                                                           az2_stop_deg,
+                                                           self.az_deg,
+                                                           self.az_min_deg,
+                                                           self.az_max_deg)
 
         self.tbl_dct[self.time_str] = dict(time=self.time_str, name=name,
                                            ra_str=ra_str, dec_str=dec_str,
                                            pa_deg=("%.1f" % self.pa_deg),
-                                           rot_cur_deg=("%.1f" % self.rot_deg),
-                                           rot1_start_deg=("%.1f" % res.rot1_start_deg),
-                                           rot1_stop_deg=("%.1f" % res.rot1_stop_deg),
-                                           rot2_start_deg=("%.1f" % res.rot2_start_deg),
-                                           rot2_stop_deg=("%.1f" % res.rot2_stop_deg),
-                                           min_rot_move=("%.1f" % min_rot_move),
-                                           max_rot_time=("%.1f" % max_rot_time),
-                                           rot_chosen=("%.1f" % -9999),
-                                           az_cur_deg=("%.1f" % self.az_deg),
-                                           az1_start_deg=("%.1f" % res2.az1_start_deg),
-                                           az1_stop_deg=("%.1f" % res2.az1_stop_deg),
-                                           az2_start_deg=("%.1f" % res2.az2_start_deg),
-                                           az2_stop_deg=("%.1f" % res2.az2_stop_deg),
-                                           alt_deg=("%.1f" % res.alt_start_deg),
-                                           min_az_move=("%.1f" % min_az_move),
-                                           max_az_time=("%.1f" % max_az_time),
-                                           az_chosen=("%.1f" % -9999),
+                                           # rot_cur_deg=("%.1f" % self.rot_deg),
+                                           rot1_start_deg=("%.1f" % rot1_start_deg),
+                                           rot1_stop_deg=("%.1f" % rot1_stop_deg),
+                                           rot2_start_deg=("%.1f" % rot2_start_deg),
+                                           rot2_stop_deg=("%.1f" % rot2_stop_deg),
+                                           # min_rot_move=("%.1f" % min_rot_move),
+                                           # max_rot_time=("%.1f" % max_rot_time),
+                                           rot_chosen=("%.1f" % rot_start),
+                                           # az_cur_deg=("%.1f" % self.az_deg),
+                                           az1_start_deg=("%.1f" % az1_start_deg),
+                                           az1_stop_deg=("%.1f" % az1_stop_deg),
+                                           az2_start_deg=("%.1f" % az2_start_deg),
+                                           az2_stop_deg=("%.1f" % az2_stop_deg),
+                                           # alt_deg=("%.1f" % alt_start_deg),
+                                           # min_az_move=("%.1f" % min_az_move),
+                                           # max_az_time=("%.1f" % max_az_time),
+                                           az_chosen=("%.1f" % az_start),
                                            )
         self.w.rot_tbl.set_tree(self.tbl_dct)
-        self.w.setup.set_text("Cancel")
-        self.w.record.set_enabled(True)
+        #self.w.record.set_enabled(True)
 
-    def record(self):
-        if self.time_str is None:
-            self.fv.show_error("Please set up a target")
-            return
-        self.tbl_dct[self.time_str]['rot_chosen'] = ("%.1f" % self.rot_cmd_deg)
-        self.tbl_dct[self.time_str]['az_chosen'] = ("%.1f" % self.az_cmd_deg)
-        self.w.rot_tbl.set_tree(self.tbl_dct)
-        self.time_str = None
-        self.w.setup.set_text("Setup")
-        self.w.record.set_enabled(False)
-
-        if self._autosave:
-            self.save_report_cb(self.w.save)
-
-    def cancel(self):
-        if self.time_str is not None:
-            if self.time_str in self.tbl_dct:
-                del self.tbl_dct[self.time_str]
-            self.time_str = None
-        self.w.rot_tbl.set_tree(self.tbl_dct)
-        self.w.setup.set_text("Setup")
-        self.w.record.set_enabled(False)
-
-    def set_pa_cb(self, w):
-        self.pa_deg = float(w.get_text().strip())
-
-    def set_time_cb(self, w):
-        self.time_sec = float(w.get_text().strip())
 
     def target_selection_cb(self, cb, targets):
         if len(targets) == 0:
@@ -372,26 +310,23 @@ class RotCalc(GingaPlugin.LocalPlugin):
             #self.w.equinox.set_text(str(tgt.equinox))
             self.w.tgt_name.set_text(tgt.name)
 
-    def send_target_cb(self, w):
-        ra_deg = wcs.hmsStrToDeg(self.w.ra.get_text())
-        dec_deg = wcs.dmsStrToDeg(self.w.dec.get_text())
-        ra_soss = wcs.ra_deg_to_str(ra_deg, format='%02d%02d%02d.%03d')
-        dec_soss = wcs.dec_deg_to_str(dec_deg, format='%s%02d%02d%02d.%02d')
-        equinox = 2000.0
-        status_dict = {"GEN2.SPOT.RA": ra_soss,
-                       "GEN2.SPOT.DEC": dec_soss,
-                       "GEN2.SPOT.EQUINOX": equinox}
-        try:
-            obj = self.fv.gpmon.get_plugin('Gen2Int')
-            obj.send_status(status_dict)
+    # def send_target_cb(self, w):
+    #     ra_deg = wcs.hmsStrToDeg(self.w.ra.get_text())
+    #     dec_deg = wcs.dmsStrToDeg(self.w.dec.get_text())
+    #     ra_soss = wcs.ra_deg_to_str(ra_deg, format='%02d%02d%02d.%03d')
+    #     dec_soss = wcs.dec_deg_to_str(dec_deg, format='%s%02d%02d%02d.%02d')
+    #     equinox = 2000.0
+    #     status_dict = {"GEN2.SPOT.RA": ra_soss,
+    #                    "GEN2.SPOT.DEC": dec_soss,
+    #                    "GEN2.SPOT.EQUINOX": equinox}
+    #     try:
+    #         obj = self.fv.gpmon.get_plugin('Gen2Int')
+    #         obj.send_status(status_dict)
 
-        except Exception as e:
-            errmsg = f"Failed to send status: {e}"
-            self.fv.show_error(errmsg)
-            self.logger.error(errmsg, exc_info=True)
-
-    def _lock_target_cb(self, w, tf):
-        self.tgt_locked = tf
+    #     except Exception as e:
+    #         errmsg = f"Failed to send status: {e}"
+    #         self.fv.show_error(errmsg)
+    #         self.logger.error(errmsg, exc_info=True)
 
     def site_changed_cb(self, cb, site_obj):
         self.logger.debug("site has changed")
@@ -400,6 +335,11 @@ class RotCalc(GingaPlugin.LocalPlugin):
     def time_changed_cb(self, cb, time_utc, cur_tz):
         self.dt_utc = time_utc
         self.cur_tz = cur_tz
+
+        obj = self.channel.opmon.get_plugin('SiteSelector')
+        status = obj.get_status()
+
+        self.update_status(status)
 
     def update_status(self, status):
         self.rot_deg = status.rot_deg
@@ -413,68 +353,84 @@ class RotCalc(GingaPlugin.LocalPlugin):
             self.w.cur_rot.set_text("%.2f" % self.rot_deg)
             self.w.cmd_rot.set_text("%.2f" % self.rot_cmd_deg)
 
-    def normalize_az(self, res):
-        new_res = Bunch.Bunch(az1_start_deg=subaru_normalize_az(res.az1_start_deg),
-                              az1_stop_deg=subaru_normalize_az(res.az1_stop_deg),
-                              az2_start_deg=subaru_normalize_az(res.az2_start_deg),
-                              az2_stop_deg=subaru_normalize_az(res.az2_stop_deg))
-        return new_res
-
-    def update_tel_timer_cb(self, timer):
-        timer.start()
-
-        obj = self.channel.opmon.get_plugin('SiteSelector')
-        status = obj.get_status()
-
-        self.update_status(status)
-
-    def save_report(self, filepath):
-        if len(self.tbl_dct) == 0:
+    def telpos_changed_cb(self, cb, status, target):
+        self.fv.assert_gui_thread()
+        if not self.gui_up or not self.w.follow_telescope.get_state():
+            return
+        tel_status = status.tel_status.lower()
+        self.logger.info(f"telescope status is '{tel_status}'")
+        if tel_status not in ['tracking', 'guiding']:
+            # don't do anything unless telescope is stably tracking/guiding
             return
 
-        try:
-            import pandas as pd
-        except ImportError:
-            self.fv.show_error("Please install 'pandas' and "
-                               "'openpyxl' to use this feature")
+        self.logger.info(f"target is {target}")
+        if target is None or target is self._cur_target:
+            pass
+        else:
+            # <-- moved to a different known target
+            # set target info
+            self._cur_target = target
+            self.set_pointing(target.ra, target.dec, target.equinox, target.name)
+
+    def get_selected_target_cb(self, w):
+        if self.w.follow_telescope.get_state():
+            # target is following telescope
+            self.fv.show_error("uncheck 'Follow telescope' to get selection")
             return
 
-        try:
-            self.logger.info("writing table: {}".format(filepath))
+        selected = self.targets.get_selected_targets()
+        if len(selected) != 1:
+            self.fv.show_error("Please select exactly one target in the Targets table!")
+            return
+        tgt = list(selected)[0]
+        self.set_pointing(tgt.ra, tgt.dec, tgt.equinox, tgt.name)
 
-            col_hdr = [colname for colname, key in self.columns]
-            rows = [list(d.values()) for d in self.tbl_dct.values()]
-            df = pd.DataFrame(rows, columns=col_hdr)
+    def set_pointing(self, ra_deg, dec_deg, equinox, tgt_name):
+        if not self.gui_up:
+            return
+        self.w.ra.set_text(wcs.ra_deg_to_str(ra_deg))
+        self.w.dec.set_text(wcs.dec_deg_to_str(dec_deg))
+        self.w.equinox.set_text(str(equinox))
+        self.w.tgt_name.set_text(tgt_name)
 
-            if filepath.endswith('.csv'):
-                df.to_csv(filepath, index=False, header=True)
+    # def save_report(self, filepath):
+    #     if len(self.tbl_dct) == 0:
+    #         return
 
-            else:
-                df.to_excel(filepath, index=False, header=True)
+    #     try:
+    #         import pandas as pd
+    #     except ImportError:
+    #         self.fv.show_error("Please install 'pandas' and "
+    #                            "'openpyxl' to use this feature")
+    #         return
 
-        except Exception as e:
-            self.logger.error("Error writing table: {}".format(e),
-                              exc_info=True)
+    #     try:
+    #         self.logger.info("writing table: {}".format(filepath))
 
-    def save_report_cb(self, w):
-        filepath = self.w.filename.get_text().strip()
-        if len(filepath) == 0:
-            filepath = self.settings.get('default_report')
-            self.w.filename.set_text(filepath)
+    #         col_hdr = [colname for colname, key in self.columns]
+    #         rows = [list(d.values()) for d in self.tbl_dct.values()]
+    #         df = pd.DataFrame(rows, columns=col_hdr)
 
-        self.save_report(filepath)
+    #         if filepath.endswith('.csv'):
+    #             df.to_csv(filepath, index=False, header=True)
 
-    def autosave_cb(self, w, tf):
-        self._autosave = tf
+    #         else:
+    #             df.to_excel(filepath, index=False, header=True)
+
+    #     except Exception as e:
+    #         self.logger.error("Error writing table: {}".format(e),
+    #                           exc_info=True)
+
+    # def save_report_cb(self, w):
+    #     filepath = self.w.filename.get_text().strip()
+    #     if len(filepath) == 0:
+    #         filepath = self.settings.get('default_report')
+    #         self.w.filename.set_text(filepath)
+
+    #     self.save_report(filepath)
+
+    # def autosave_cb(self, w, tf):
+    #     self._autosave = tf
 
     def __str__(self):
         return 'rotcalc'
-
-
-def subaru_normalize_az(az_deg, normalize_angle=True):
-    div = 360.0 if az_deg >= 0.0 else -360.0
-    az_deg = az_deg + 180.0
-    if normalize_angle:
-        az_deg = np.remainder(az_deg, div)
-
-    return az_deg
