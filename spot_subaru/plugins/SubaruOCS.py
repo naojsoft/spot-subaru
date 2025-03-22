@@ -80,7 +80,7 @@ class SubaruOCS(GingaPlugin.GlobalPlugin):
             dec_cmd_deg='STATS.DEC_CMD_DEG',
             cmd_equinox='STATS.EQUINOX',
             slew_time_sec='STATS.SLEWING_TIME',
-            tel_status='STATL.TELDRIVE',
+            # tel_status='STATL.TELDRIVE',
             rot_deg='FITS.SBR.INSROT',
             rot_cmd_deg='FITS.SBR.INSROT_CMD',
         )
@@ -138,6 +138,12 @@ class SubaruOCS(GingaPlugin.GlobalPlugin):
             dct = {key: self.status_dict[alias]
                    for key, alias in self.status_map.items()
                    if alias in self.status_dict}
+
+            # special handling
+            tel_status = str(self.status_dict['STATL.TELDRIVE']).lower()
+            if tel_status.startswith('guiding'):
+                tel_status = 'guiding'
+            dct['tel_status'] = tel_status
 
         # update the site status variables
         site_obj = None
