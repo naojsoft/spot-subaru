@@ -10,7 +10,15 @@ def setup_SubaruOCS():
     spec = Bunch(path=os.path.join(p_path, 'SubaruOCS.py'),
                  module='SubaruOCS', klass='SubaruOCS',
                  ptype='global', enabled=True, start=True,
-                 category="Planning")
+                 hidden=True, category="Planning")
+    return spec
+
+
+def setup_Gen2Int():
+    spec = Bunch(path=os.path.join(p_path, 'Gen2Int.py'),
+                 module='Gen2Int', klass='Gen2Int',
+                 ptype='global', category="Planning",
+                 enabled=True, start=True, hidden=True)
     return spec
 
 
