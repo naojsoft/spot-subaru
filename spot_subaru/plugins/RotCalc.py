@@ -75,6 +75,7 @@ class RotCalc(GingaPlugin.LocalPlugin):
         self.az_deg = 0.0
         self.az_cmd_deg = 0.0
         self.pa_deg = 0.0
+        self.delay_sec = 0
         self.time_sec = 15 * 60
         self.insname = 'PFS'
         self.rot_min_deg = -174.0
@@ -224,10 +225,9 @@ class RotCalc(GingaPlugin.LocalPlugin):
         self.w.rot_tbl.clear()
         self.tbl_dct = dict()
 
-        delay_sec = float(self.w.delay.get_value())
+        self.delay_sec = float(self.w.delay.get_value())
         self.pa_deg = float(self.w.pa.get_text().strip())
         self.time_sec = float(self.w.secs.get_text().strip())
-        self.time_str = self.dt_utc.astimezone(self.cur_tz).strftime("%H:%M:%S")
         name = self.w.tgt_name.get_text().strip()
         ra_str = self.w.ra.get_text().strip()
         dec_str = self.w.dec.get_text().strip()
@@ -237,7 +237,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
         equinox = 2000.0
         body = calcpos.Body(name, ra_deg, dec_deg, equinox)
 
-        start_time = self.dt_utc + timedelta(seconds=delay_sec)
+        start_time = self.dt_utc + timedelta(seconds=self.delay_sec)
+        self.time_str = start_time.astimezone(self.cur_tz).strftime("%H:%M:%S")
         cres_start = body.calc(self.site.observer, start_time)
         cres_stop = body.calc(self.site.observer,
                               start_time + timedelta(seconds=self.time_sec))
