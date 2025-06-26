@@ -58,6 +58,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                         # ('Min Rot Move', 'min_rot_move'),
                         # ('Max Rot Time', 'max_rot_time'),
                         ('Sugg Rot', 'rot_chosen'),
+                        ('El start', 'el_start_deg'),
+                        ('El stop', 'el_stop_deg'),
                         # ('Cur Az', 'az_cur_deg'),
                         ('Az1 start', 'az1_start_deg'),
                         ('Az1 stop', 'az1_stop_deg'),
@@ -133,6 +135,7 @@ class RotCalc(GingaPlugin.LocalPlugin):
         fr = Widgets.Frame("PA / Exp Time")
 
         captions = (("Calculate", 'button',
+                     'Delay (sec):', 'label', 'delay', 'spinbox',
                      'PA (deg):', 'label', 'pa', 'entry',
                      'Exp time (sec):', 'label', 'secs', 'entry'),
                     )
@@ -143,8 +146,11 @@ class RotCalc(GingaPlugin.LocalPlugin):
         fr.set_widget(w)
         top.add_widget(fr, stretch=0)
 
+        b.delay.set_limits(0, 3600, incr_value=60)
+        b.delay.set_tooltip("Delay until I want to observe this target (sec)")
+        b.delay.set_value(0)
         b.pa.set_text("0.00")
-        b.pa.set_tooltip("Set desired position angle")
+        b.pa.set_tooltip("Set desired Position Angle (deg)")
         b.secs.set_text("{}".format(15 * 60.0))
         b.secs.set_tooltip("Number of seconds on target")
         b.calculate.set_tooltip("Calculate rotator and azimuth choices")
@@ -218,6 +224,7 @@ class RotCalc(GingaPlugin.LocalPlugin):
         self.w.rot_tbl.clear()
         self.tbl_dct = dict()
 
+        delay_sec = float(self.w.delay.get_value())
         self.pa_deg = float(self.w.pa.get_text().strip())
         self.time_sec = float(self.w.secs.get_text().strip())
         self.time_str = self.dt_utc.astimezone(self.cur_tz).strftime("%H:%M:%S")
@@ -230,14 +237,19 @@ class RotCalc(GingaPlugin.LocalPlugin):
         equinox = 2000.0
         body = calcpos.Body(name, ra_deg, dec_deg, equinox)
 
-        cres_start = body.calc(self.site.observer, self.dt_utc)
+        start_time = self.dt_utc + timedelta(seconds=delay_sec)
+        cres_start = body.calc(self.site.observer, start_time)
         cres_stop = body.calc(self.site.observer,
-                              self.dt_utc + timedelta(seconds=self.time_sec))
+                              start_time + timedelta(seconds=self.time_sec))
+
+        status = self.site.get_status()
+        obs_lat_deg = status['latitude_deg']
 
         # CHECK POSSIBLE ROTATIONS
         res = naoj_rot.calc_possible_rotations(cres_start.pang_deg,
                                                cres_stop.pang_deg, self.pa_deg,
-                                               self.insname)
+                                               self.insname,
+                                               dec_deg, obs_lat_deg)
         rot1_start_deg, rot1_stop_deg = res[0]
         rot2_start_deg, rot2_stop_deg = res[1]
 
@@ -250,10 +262,10 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                                              self.rot_max_deg)
 
         # CHECK POSSIBLE AZIMUTHS
-        status = self.site.get_status()
-        lat_deg = status['latitude_deg']
-        az_choices = naoj_rot.calc_possible_azimuths(cres_start, cres_stop,
-                                                     lat_deg)
+        az_choices = naoj_rot.calc_possible_azimuths(dec_deg,
+                                                     cres_start.az_deg,
+                                                     cres_stop.az_deg,
+                                                     obs_lat_deg)
         az1_start_deg = np.nan
         az1_stop_deg = np.nan
         az2_start_deg = np.nan
@@ -271,6 +283,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                                            self.az_min_deg,
                                                            self.az_max_deg)
 
+        el_start_deg = cres_start.alt_deg
+        el_stop_deg = cres_stop.alt_deg
         self.tbl_dct[self.time_str] = dict(time=self.time_str, name=name,
                                            ra_str=ra_str, dec_str=dec_str,
                                            pa_deg=("%.1f" % self.pa_deg),
@@ -282,6 +296,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                            # min_rot_move=("%.1f" % min_rot_move),
                                            # max_rot_time=("%.1f" % max_rot_time),
                                            rot_chosen=("%.1f" % rot_start),
+                                           el_start_deg=("%.1f" % el_start_deg),
+                                           el_stop_deg=("%.1f" % el_stop_deg),
                                            # az_cur_deg=("%.1f" % self.az_deg),
                                            az1_start_deg=("%.1f" % az1_start_deg),
                                            az1_stop_deg=("%.1f" % az1_stop_deg),
