@@ -51,6 +51,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                         ('DEC', 'dec_str'),
                         ('PA', 'pa_deg'),
                         # ('Rot cur', 'rot_cur_deg'),
+                        ('Pang start', 'pang_start_deg'),
+                        ('Pang stop', 'pang_stop_deg'),
                         ('Rot1 start', 'rot1_start_deg'),
                         ('Rot1 stop', 'rot1_stop_deg'),
                         ('Rot2 start', 'rot2_start_deg'),
@@ -58,6 +60,7 @@ class RotCalc(GingaPlugin.LocalPlugin):
                         # ('Min Rot Move', 'min_rot_move'),
                         # ('Max Rot Time', 'max_rot_time'),
                         ('Sugg Rot', 'rot_chosen'),
+                        ('Offset angle', 'offset_angle'),
                         ('El start', 'el_start_deg'),
                         ('El stop', 'el_stop_deg'),
                         # ('Cur Az', 'az_cur_deg'),
@@ -247,8 +250,10 @@ class RotCalc(GingaPlugin.LocalPlugin):
         obs_lat_deg = status['latitude_deg']
 
         # CHECK POSSIBLE ROTATIONS
-        res = naoj_rot.calc_possible_rotations(cres_start.pang_deg,
-                                               cres_stop.pang_deg, self.pa_deg,
+        pang_start_deg, pang_stop_deg = (cres_start.pang_deg,
+                                         cres_stop.pang_deg)
+        res = naoj_rot.calc_possible_rotations(pang_start_deg,
+                                               pang_stop_deg, self.pa_deg,
                                                self.insname,
                                                dec_deg, obs_lat_deg)
         rot1_start_deg, rot1_stop_deg = res[0]
@@ -261,6 +266,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                                              self.rot_deg,
                                                              self.rot_min_deg,
                                                              self.rot_max_deg)
+        offset_angle = naoj_rot.calc_offset_angle(cres_start.pang_deg,
+                                                  self.pa_deg)
 
         # CHECK POSSIBLE AZIMUTHS
         az_choices = naoj_rot.calc_possible_azimuths(dec_deg,
@@ -290,6 +297,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                            ra_str=ra_str, dec_str=dec_str,
                                            pa_deg=("%.1f" % self.pa_deg),
                                            # rot_cur_deg=("%.1f" % self.rot_deg),
+                                           pang_start_deg=("%.1f" % pang_start_deg),
+                                           pang_stop_deg=("%.1f" % pang_stop_deg),
                                            rot1_start_deg=("%.1f" % rot1_start_deg),
                                            rot1_stop_deg=("%.1f" % rot1_stop_deg),
                                            rot2_start_deg=("%.1f" % rot2_start_deg),
@@ -297,6 +306,7 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                            # min_rot_move=("%.1f" % min_rot_move),
                                            # max_rot_time=("%.1f" % max_rot_time),
                                            rot_chosen=("%.1f" % rot_start),
+                                           offset_angle=("%.1f" % offset_angle),
                                            el_start_deg=("%.1f" % el_start_deg),
                                            el_stop_deg=("%.1f" % el_stop_deg),
                                            # az_cur_deg=("%.1f" % self.az_deg),
