@@ -24,9 +24,7 @@ from ginga.util import wcs
 
 # local
 from spot.util import calcpos
-
-
-default_report = os.path.join(os.path.expanduser('~'), "rot_report.csv")
+from spot.instruments.subaru import subaru_fov_dict
 
 
 class RotCalc(GingaPlugin.LocalPlugin):
@@ -39,11 +37,13 @@ class RotCalc(GingaPlugin.LocalPlugin):
         prefs = self.fv.get_preferences()
         self.settings = prefs.create_category('plugin_RotCalc')
         self.settings.add_defaults(telescope_update_interval=3.0,
-                                   default_report=default_report,
-                                   follow_telescope=False)
+                                   follow_telescope=False,
+                                   default_instrument='PFS')
         self.settings.load(onError='silent')
 
         self.viewer = self.fitsimage
+        # instrument names from FOV file
+        self.ins_names = list(sorted(subaru_fov_dict.keys()))
 
         self.columns = [('Time', 'time'),
                         ('Name', 'name'),
@@ -78,11 +78,12 @@ class RotCalc(GingaPlugin.LocalPlugin):
         self.az_deg = 0.0
         self.az_cmd_deg = 0.0
         self.pa_deg = 0.0
+        self.ins_name = 'PFS'
         self.delay_sec = 0
         self.time_sec = 15 * 60
-        self.insname = 'PFS'
-        self.rot_min_deg = -174.0
-        self.rot_max_deg = +174.0
+        self.insname = self.settings.get('default_instrument', 'PFS')
+        self.rot_limit_deg = naoj_rot.rot_limits.get(self.insname,
+                                                     (-270.0, +270.0))
         self.az_min_deg = -270.0
         self.az_max_deg = +270.0
         self.tbl_dct = dict()
@@ -119,7 +120,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
                     ('Equinox:', 'label', 'equinox', 'llabel',
                      'Name:', 'label', 'tgt_name', 'llabel'),
                     ('Get Selected', 'button', '_sp1', 'spacer',
-                     "Follow telescope", 'checkbox')
+                     "Follow telescope", 'checkbox',
+                     "Instrument:", 'label', 'instrument', 'combobox')
                     )
 
         w, b = Widgets.build_info(captions)
@@ -132,6 +134,11 @@ class RotCalc(GingaPlugin.LocalPlugin):
         b.get_selected.add_callback('activated', self.get_selected_target_cb)
         b.follow_telescope.set_tooltip("Set pointing to telescope position")
         b.follow_telescope.set_state(self.settings['follow_telescope'])
+        for name in self.ins_names:
+            b.instrument.append_text(name)
+        b.instrument.set_tooltip("Choose instrument")
+        b.instrument.set_text("PFS")
+        b.instrument.add_callback('activated', self.choose_instrument_cb)
         self.w.update(b)
         fr.set_widget(w)
         top.add_widget(fr, stretch=0)
@@ -252,27 +259,33 @@ class RotCalc(GingaPlugin.LocalPlugin):
         # CHECK POSSIBLE ROTATIONS
         pang_start_deg, pang_stop_deg = (cres_start.pang_deg,
                                          cres_stop.pang_deg)
+        az_start_deg, az_stop_deg = (cres_start.az_deg,
+                                     cres_stop.az_deg)
         res = naoj_rot.calc_possible_rotations(pang_start_deg,
                                                pang_stop_deg, self.pa_deg,
                                                self.insname,
-                                               dec_deg, obs_lat_deg)
-        rot1_start_deg, rot1_stop_deg = res[0]
-        rot2_start_deg, rot2_stop_deg = res[1]
+                                               az_start_deg,
+                                               az_stop_deg)
+        rot1_start_deg, rot1_stop_deg, rot1_off_deg = res[0]
+        rot2_start_deg, rot2_stop_deg, rot2_off_deg = res[1]
 
         rot_start, rot_stop = naoj_rot.calc_optimal_rotation(rot1_start_deg,
                                                              rot1_stop_deg,
                                                              rot2_start_deg,
                                                              rot2_stop_deg,
                                                              self.rot_deg,
-                                                             self.rot_min_deg,
-                                                             self.rot_max_deg)
-        offset_angle = naoj_rot.calc_offset_angle(cres_start.pang_deg,
-                                                  self.pa_deg)
+                                                             self.rot_limit_deg[0],
+                                                             self.rot_limit_deg[1])
+        # "offset angle" is what we need to pass to the telescope in
+        # LINK (SYNC) mode to set the position angle on the sky
+        offset_angle = rot1_off_deg
+        if not np.isclose(rot_start, rot1_start_deg, atol=0.1):
+            offset_angle = rot2_off_deg
 
         # CHECK POSSIBLE AZIMUTHS
         az_choices = naoj_rot.calc_possible_azimuths(dec_deg,
-                                                     cres_start.az_deg,
-                                                     cres_stop.az_deg,
+                                                     az_start_deg,
+                                                     az_stop_deg,
                                                      obs_lat_deg)
         az1_start_deg = np.nan
         az1_stop_deg = np.nan
@@ -419,6 +432,13 @@ class RotCalc(GingaPlugin.LocalPlugin):
         self.w.dec.set_text(wcs.dec_deg_to_str(dec_deg))
         self.w.equinox.set_text(str(equinox))
         self.w.tgt_name.set_text(tgt_name)
+
+    def choose_instrument_cb(self, w, idx):
+        self.insname = w.get_text()
+        self.rot_limit_deg = naoj_rot.rot_limits.get(self.insname,
+                                                     (-270.0, +270.0))
+        min_rot_deg, max_rot_deg = self.rot_limit_deg
+        self.logger.info(f"set rotator limits from {min_rot_deg:.1f} to {max_rot_deg:.1f}")
 
     # def save_report(self, filepath):
     #     if len(self.tbl_dct) == 0:
