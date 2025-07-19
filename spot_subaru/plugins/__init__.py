@@ -22,19 +22,19 @@ def setup_Gen2Int():
     return spec
 
 
-def setup_HSCPlanner():
-    spec = Bunch(path=os.path.join(p_path, 'HSCPlanner.py'),
-                 module='HSCPlanner', klass='HSCPlanner',
-                 ptype='local', category="Planning", menu="HSC Planner",
-                 tab='HSC Planner', ch_sfx='_FIND',
-                 enabled=True, exclusive=False)
-    return spec
-
-
 def setup_RotCalc():
     spec = Bunch(path=os.path.join(p_path, 'RotCalc.py'),
                  module='RotCalc', klass='RotCalc',
                  ptype='local', category="Experimental",
                  menu="RotCalc", tab='RotCalc',
+                 ch_sfx='_TGTS', enabled=False, exclusive=False)
+    return spec
+
+
+def setup_LTCS():
+    spec = Bunch(path=os.path.join(p_path, 'LTCS.py'),
+                 module='LTCS', klass='LTCS',
+                 ptype='local', category="Planning",
+                 menu="LTCS", tab='LTCS',
                  ch_sfx='_TGTS', enabled=False, exclusive=False)
     return spec
