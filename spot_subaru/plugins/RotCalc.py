@@ -10,15 +10,13 @@ naojsoft packages
 - ginga
 """
 from datetime import timedelta
-import os
 
 import numpy as np
 
 from naoj.util import rot as naoj_rot
 
 # ginga
-from ginga.gw import Widgets, GwHelp
-from ginga.misc import Bunch
+from ginga.gw import Widgets
 from ginga import GingaPlugin
 from ginga.util import wcs
 
@@ -334,7 +332,6 @@ class RotCalc(GingaPlugin.LocalPlugin):
                                            )
         self.w.rot_tbl.set_tree(self.tbl_dct)
         #self.w.record.set_enabled(True)
-
 
     def target_selection_cb(self, cb, targets):
         if len(targets) == 0:

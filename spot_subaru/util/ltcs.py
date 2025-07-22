@@ -50,7 +50,7 @@ class Collisions:
                            'collisions': f"SELECT * FROM collisions WHERE laser='{laser}' ORDER BY start_time;",
                            'sim_predict': f"SELECT * FROM sim_predictions  WHERE laser LIKE '%{laser}' ORDER BY start_time;",
                            'predict': f"SELECT laser,involved_scope,start_time,end_time,laser_has_priority FROM predictions WHERE laser='{laser}' ORDER BY start_time;",
-                          }
+                           }
 
         # the current status of the system
         self.status = Bunch.Bunch(dict(remain_str='',
@@ -241,8 +241,8 @@ class Collisions:
         else:
             self.logger.info(f'self.ltcs_list_collisions {self.ltcs_list_collisions}')
 
-            collisions_start_min =  current_sse + 365 * 24 * 3600
-            collisions_end_max =  current_sse - 365 * 24 * 3600
+            collisions_start_min = current_sse + 365 * 24 * 3600
+            collisions_end_max = current_sse - 365 * 24 * 3600
             collisions_list = ''
             within_coll = False
             # loop over all collisions in the list
@@ -273,7 +273,7 @@ class Collisions:
                         # longest collision?
                         if curr_coll.time_stop_sse > collisions_end_max:
                             collisions_end_max = curr_coll.time_stop_sse
-                            collisions_impact  = curr_coll.telescope_str
+                            collisions_impact = curr_coll.telescope_str
 
             # the time until the next collision / end of current collision
             if within_coll:
@@ -303,7 +303,7 @@ class Collisions:
                 tm, ts = divmod(rem, 60)
                 th, tm, ts = int(th), int(tm), int(ts)
                 collisions_remain_str = f"{th:02d}:{tm:02d}:{ts:02d}"
-                collisions_str = collisions_str +  collisions_remain_str + ' with ' + collisions_impact
+                collisions_str = collisions_str + collisions_remain_str + ' with ' + collisions_impact
             else:
                 collisions_str = ''
 

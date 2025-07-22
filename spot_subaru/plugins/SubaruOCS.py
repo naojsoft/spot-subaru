@@ -27,6 +27,7 @@ from g2cam.status.stream import StatusStream
 # local
 from spot.util import sites
 
+
 class SubaruOCS(GingaPlugin.GlobalPlugin):
     """
     +++++++++

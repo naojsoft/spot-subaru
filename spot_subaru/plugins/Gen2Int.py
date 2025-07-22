@@ -13,7 +13,6 @@ import pandas as pd
 
 # ginga
 from ginga import GingaPlugin
-from ginga.gw import Widgets
 
 # g2cam
 from g2base.remoteObjects import remoteObjects as ro
