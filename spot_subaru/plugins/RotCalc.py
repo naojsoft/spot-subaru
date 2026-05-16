@@ -16,7 +16,6 @@ import numpy as np
 from naoj.util import rot as naoj_rot
 
 # ginga
-from ginga.gw import Widgets
 from ginga import GingaPlugin
 from ginga.util import wcs
 
@@ -96,6 +95,8 @@ class RotCalc(GingaPlugin.LocalPlugin):
         self.gui_up = False
 
     def build_gui(self, container):
+
+        Widgets = self.fv.get_widget_classes()
 
         # initialize site and date/time/tz
         obj = self.channel.opmon.get_plugin('SiteSelector')

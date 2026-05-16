@@ -9,7 +9,8 @@ An instance can be opened for each channel.
 
 Usage
 =====
-``LTCS`` is normally used in conjunction with the plugin ``PolarSky``.
+``LTCS`` is normally used in conjunction with the plugin ``PolarSky``,
+``Targets`` and ``Visibility``.
 
 Requirements
 ============
@@ -22,7 +23,6 @@ naojsoft packages
 import os
 
 # ginga
-from ginga.gw import Widgets
 from ginga import GingaPlugin
 
 from spot_subaru.util import ltcs
@@ -52,6 +52,12 @@ class LTCS(GingaPlugin.LocalPlugin):
         if ltcs_db_cfg_path is None:
             ltcs_db_cfg_path = os.path.join(os.environ['CONFHOME'],
                                             'lgs', 'ltcs.yml')
+            if not os.path.exists(ltcs_db_cfg_path):
+                home = os.path.expanduser('~')
+                ltcs_db_cfg_path = os.path.join(home, '.spot', 'ltcs.yml')
+                if not os.path.exists(ltcs_db_cfg_path):
+                    raise Exception("You need a valid LTCS config file"
+                                    " to load this plugin")
 
         self.collisions = ltcs.Collisions(self.logger, ltcs_db_cfg_path)
 
@@ -60,6 +66,8 @@ class LTCS(GingaPlugin.LocalPlugin):
     def build_gui(self, container):
         if not self.chname.endswith('_TGTS'):
             raise Exception(f"This plugin is not designed to run in channel {self.chname}")
+
+        Widgets = self.fv.get_widget_classes()
 
         obj = self.channel.opmon.get_plugin('SiteSelector')
         self.site_obj = obj.get_site()
