@@ -21,6 +21,7 @@ from ginga.util import wcs
 
 # local
 from spot.util import calcpos
+from spot.util.config import get_workspace_settings
 from spot.instruments.subaru import subaru_fov_dict
 
 
@@ -30,9 +31,10 @@ class RotCalc(GingaPlugin.LocalPlugin):
         # superclass defines some variables for us, like logger
         super().__init__(fv, fitsimage)
 
-        # get preferences
-        prefs = self.fv.get_preferences()
-        self.settings = prefs.create_category('plugin_RotCalc')
+        # get preferences, stored per-workspace under ~/.spot/<wsname>
+        wsname = self.chname.rsplit('_', 1)[0]
+        self.settings = get_workspace_settings(wsname, 'RotCalc',
+                                               logger=self.logger)
         self.settings.add_defaults(telescope_update_interval=3.0,
                                    follow_telescope=False,
                                    default_instrument='PFS')

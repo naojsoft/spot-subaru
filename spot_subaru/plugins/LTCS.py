@@ -25,6 +25,7 @@ import os
 # ginga
 from ginga import GingaPlugin
 
+from spot.util.config import get_workspace_settings
 from spot_subaru.util import ltcs
 
 
@@ -34,9 +35,10 @@ class LTCS(GingaPlugin.LocalPlugin):
     def __init__(self, fv, fitsimage):
         super().__init__(fv, fitsimage)
 
-        # get preferences
-        prefs = self.fv.get_preferences()
-        self.settings = prefs.create_category('plugin_LTCS')
+        # get preferences, stored per-workspace under ~/.spot/<wsname>
+        wsname = self.chname.rsplit('_', 1)[0]
+        self.settings = get_workspace_settings(wsname, 'LTCS',
+                                               logger=self.logger)
         self.settings.add_defaults(update_interval=1.0,
                                    ltcs_db_cfg_path=None)
         self.settings.load(onError='silent')
