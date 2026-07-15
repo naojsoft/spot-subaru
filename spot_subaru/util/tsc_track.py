@@ -56,7 +56,7 @@ class TSCTrack:
                 dt = dt.astimezone(UTC)
             # datetime (format: YYYYMMDDHHMMSS.SSS)
             dt_tsc = '.'.join([dt.strftime('%Y%m%d%H%M%S'),
-                               '{%03d}'.format(int(dt.microsecond / 1000))])
+                               '{:03d}'.format(int(dt.microsecond / 1000))])
             # ra in "funky SOSS format" (HHMMSS.SSS)
             ra_fsf = wcs.ra_deg_to_str(self.track_tbl['RA'][i],
                                        format='%02d%02d%02d.%03d',
